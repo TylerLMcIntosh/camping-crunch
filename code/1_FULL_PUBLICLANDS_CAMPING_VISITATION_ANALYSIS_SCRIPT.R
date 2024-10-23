@@ -669,6 +669,8 @@ gc()
 #CAMPSITE ANALYSIS----
 
 #PART 1: Analyze campsites----
+campsites <- data.table::fread(here::here(raw_dir, "RIDBFullExport_V1_CSV/Campsites_API_v1.csv"))
+
 #Fixdate
 campsites <- campsites[,CreatedDateFix:= as.Date(CreatedDate)]
 
@@ -686,25 +688,32 @@ ggplot(campsites, aes(CreatedDateFix))+geom_histogram(bins=60)
 campsites.existing.full <- campsites.existing
 fill <- data.table(CreatedDateFix = character(), AddedCampsites = integer(), ExistingCampsites = integer())
 
+head(campsites.existing)
+head(campsites.existing.full)
+
 for (i in c(1:280)) {
   between.dats <- tail(head((seq(campsites.existing$CreatedDateFix[i], campsites.existing$CreatedDateFix[i+1], by="days")), -1), -1)
-  fill <- data.table(between.dats, 0, campsites.existing$ExistingCampsites[i])
-  campsites.existing.full <- rbind(campsites.existing.full, fill, use.names=FALSE)
+  fill <- data.table(CreatedDateFix = as.Date(between.dats), AddedCampsites = 0, ExistingCampsites = campsites.existing$ExistingCampsites[i])
+  campsites.existing.full <- dplyr::bind_rows(campsites.existing.full, fill)
 }
 
-campsites.existing.full <- na.omit(campsites.existing.full[order(CreatedDateFix),])
+campsites.existing.full <- campsites.existing.full |>
+  dplyr::arrange("CreatedDateFix") %>%
+  filter(complete.cases(.))
 data.table::fwrite(campsites.existing.full, here::here(derived_dir, "FullCalendarListCampsitesExisting.gz"))
 
 #Make, explore campgrounds
 
 #Number of campsites in each facility
-campgrounds <- campsites %>% group_by(FacilityID) %>% summarize(number.campsites = n())
+campgrounds <- campsites %>% group_by(FacilityID) %>% summarize(number.campsites.total = n())
 write.csv(campgrounds, here::here(derived_dir, "Campgrounds2021.csv"))
-ggplot(campgrounds, aes(number.campsites)) + geom_histogram(bins = 100)
+ggplot(campgrounds, aes(number.campsites.total)) + geom_histogram(bins = 100)
 
 #Figure out if campgrounds are usually added all at once, or in pieces)
-campgrounds.created.date <- campsites %>% group_by(FacilityID, CreatedDateFix) %>% summarize(number.campsites = n())
-campgrounds.created.date <- left_join(campgrounds.created.date, campgrounds, by = "FacilityID")
+campgrounds.created.date <- campsites %>%
+  group_by(FacilityID, CreatedDateFix) %>%
+  summarize("number.campsites" = n())
+campgrounds.created.date <- left_join(campgrounds.created.date, campgrounds, by = c("FacilityID"))
 campgrounds.created.date <- campgrounds.created.date %>% mutate(percentage = 100*(number.campsites/number.campsites.total))
 ggplot(campgrounds.created.date, aes(percentage)) + geom_histogram(bins = 100)
 print(paste((sum(campgrounds.created.date$percentage > 95, na.rm = TRUE) / sum(campgrounds.created.date$percentage >= 50, na.rm = TRUE)*100), "% of the campgrounds had 95% of their campsites immediately upon inclusion"))
@@ -770,7 +779,7 @@ facilities <- facilities %>% mutate(FacilityID = as.integer(FacilityID))
 #Add basic facility data, 
 camps.exist.expand <- camps.exist.expand %>% left_join(facilities, by = "FacilityID")
 mini <- camps.exist.expand[1:100,]
-camps.exist.expand <- camps.exist.expand %>% select(-V1, -CreatedDateFix, -number.campsites, -number.campsites.total,
+camps.exist.expand <- camps.exist.expand %>% select(-CreatedDateFix, -number.campsites, -number.campsites.total,
                                                     -percentage, -FirstDate, -LastDate, -LegacyFacilityID, -(ParentOrgID:ParentRecAreaID),
                                                     -(FacilityDescription:FacilityAdaAccess), -(Keywords:LastUpdatedDate))
 setnames(camps.exist.expand, old = "AllDates", new = "NightDates")
@@ -795,7 +804,7 @@ camps.exist.expand[FacilityID==264411, FacilityLongitude := -FacilityLongitude]
 
 #Write to lat/long csv for GIS analysis
 camping.facilities.all <- camps.exist.expand %>% distinct(FacilityID, .keep_all = TRUE) %>% select(FacilityID, FacilityLatitude, FacilityLongitude)
-fwrite(camping.facilities.all, "ALLSpatialCampingFacilities.gz")
+fwrite(camping.facilities.all, here::here(derived_dir, "ALLSpatialCampingFacilities.gz"))
 
 
 #PERFORM GIS ANALYSIS
@@ -860,51 +869,53 @@ spatial.analyzed.campgrounds <- spatial.analyzed.campgrounds %>% select(-Win10km
 spatial.analyzed.campgrounds <- spatial.analyzed.campgrounds %>% select(-FacilityLatitude, -FacilityLongitude)
 camps.exist.expand.spatial.data <- camps.exist.expand %>% left_join(spatial.analyzed.campgrounds, by = "FacilityID")
 
-View(camps.exist.expand.spatial.data[1:100,])
+#View(camps.exist.expand.spatial.data[1:100,])
 
 #Add "missing" to facilities w/ bad lat/long, either 0's or USACE messed up data
 camps.exist.expand.spatial.data[is.na(FacilityState), LocationGood := "Bad Lat/Long"]
 camps.exist.expand.spatial.data[is.na(LocationGood), LocationGood := "Good Lat/Long"]
 
-View(camps.exist.expand.spatial.data[LocationGood == "Bad Lat/Long",])
-fwrite(camps.exist.expand.spatial.data, "CampgroundNightsExisting_WithSpatialAnalysis.csv")
-camps.exist.expand.spatial.data <- fread("CampgroundNightsExisting_WithSpatialAnalysis.csv")
+#View(camps.exist.expand.spatial.data[LocationGood == "Bad Lat/Long",])
+fwrite(camps.exist.expand.spatial.data, here::here(derived_dir, "CampgroundNightsExisting_WithSpatialAnalysis.gz"))
+camps.exist.expand.spatial.data <- fread(here::here(derived_dir, "CampgroundNightsExisting_WithSpatialAnalysis.gz"))
 
 # ADD IN just IN/OUT PADUS / NPs / etc
 camps.exist.expand.spatial.data[, OverallPADUSGroup := "Outside PADUS 1-2"]
 camps.exist.expand.spatial.data[PADUSGroup == "In PADUS 1-2", OverallPADUSGroup := "In PADUS 1-2"]
 camps.exist.expand.spatial.data[, OverallNPGroup := "Outside NP"]
 camps.exist.expand.spatial.data[NPGroup == "In NP", OverallNPGroup := "In NP"]
-View(camps.exist.expand.spatial.data[1:10,])
-fwrite(camps.exist.expand.spatial.data, "CampgroundNightsExisting_WithSpatialAnalysis.csv")
+#View(camps.exist.expand.spatial.data[1:10,])
+fwrite(camps.exist.expand.spatial.data, here::here(derived_dir,"CampgroundNightsExisting_WithSpatialAnalysis.gz"))
 
 #OCCUPANCY ANALYSIS----
 
 #PART 1: Join!----
+camps.exist.expand.spatial.data <- fread(here::here(derived_dir,"CampgroundNightsExisting_WithSpatialAnalysis.gz"))
 
-full.expanded.fixed <- fread("FullExpandedFixed.csv")
+
+full.expanded.fixed <- fread(here::here(derived_dir, "FullExpandedFixed.gz"))
 reservable.locations <- unique(full.expanded.fixed$FacilityID) #All facilities ever reserved over the study time frame. Assume any others are un-reservable
 #Remove facilities without a match from camps.exist.spatial.data
 camps.exist.expand.spatial.data.reservable <- camps.exist.expand.spatial.data %>% filter(FacilityID %in% reservable.locations)
-fwrite(camps.exist.expand.spatial.data.reservable, "USE_ReservableCampgroundNightsExisting_WithSpatialAnalysis.csv")
+fwrite(camps.exist.expand.spatial.data.reservable, here::here(derived_dir, "USE_ReservableCampgroundNightsExisting_WithSpatialAnalysis.gz"))
 rm(camps.exist.expand.spatial.data)
 
 #Separate dataset for different joins
-camps.exist.expand.spatial.data.reservable <-fread("USE_ReservableCampgroundNightsExisting_WithSpatialAnalysis.csv")
-View(camps.exist.expand.spatial.data.reservable[1:10,])
+camps.exist.expand.spatial.data.reservable <-fread(here::here(derived_dir, "USE_ReservableCampgroundNightsExisting_WithSpatialAnalysis.gz"))
+#View(camps.exist.expand.spatial.data.reservable[1:10,])
 camps.exist.expand.reservable <- camps.exist.expand.spatial.data.reservable %>% select(-(PADUS_NEAR_m:KernDens_40km), -(NPGroup:PADUSGroup), -OverallPADUSGroup, -OverallNPGroup)
 camps.exist.unique.spatial.clean <- camps.exist.expand.spatial.data.reservable %>% select(FacilityID, PADUS_NEAR_m:KernDens_40km, NPGroup:PADUSGroup, OverallPADUSGroup, OverallNPGroup)
 camps.exist.unique.spatial.clean <- camps.exist.unique.spatial.clean %>% distinct(FacilityID, .keep_all = TRUE)
 rm(camps.exist.expand.spatial.data.reservable)
-fwrite(camps.exist.expand.reservable, "USE_ReservableCampgroundNightsExisting.csv")
-fwrite(camps.exist.unique.spatial.clean, "USE_UniqueFacilityIDs_WithSpatialAnalysis.csv")
+fwrite(camps.exist.expand.reservable, here::here(derived_dir, "USE_ReservableCampgroundNightsExisting.gz"))
+fwrite(camps.exist.unique.spatial.clean, here::here(derived_dir, "USE_UniqueFacilityIDs_WithSpatialAnalysis.gz"))
 
-expanded.fixed.grouped <- fread("ExpandedFixed_GroupedByFacilityIDAndNightDates.csv")
-camps.exist.expand.reservable <- fread("USE_ReservableCampgroundNightsExisting.csv")
+expanded.fixed.grouped <- fread(here::here(derived_dir, "ExpandedFixed_GroupedByFacilityIDAndNightDates.gz"))
+camps.exist.expand.reservable <- fread(here::here(derived_dir, "USE_ReservableCampgroundNightsExisting.gz"))
 
-View(expanded.fixed.grouped[1:10,])
-View(camps.exist.expand.reservable[1:10,])
-View(camps.exist.unique.spatial.clean[1:10,])
+# View(expanded.fixed.grouped[1:10,])
+# View(camps.exist.expand.reservable[1:10,])
+# View(camps.exist.unique.spatial.clean[1:10,])
 
 expanded.fixed.grouped <- expanded.fixed.grouped %>% select(-Weekday, -ResMonthWritten, -FacilityLongitude, -FacilityLatitude, -Agency)
 
@@ -915,12 +926,15 @@ expanded.fixed.grouped.stat <- expanded.fixed.grouped %>% select(NightDates, Fac
 rm(expanded.fixed.grouped)
 
 #RUN THE JOIN
-occupancy.rates <- camps.exist.expand.reservable %>% left_join(expanded.fixed.grouped.descriptive, by = "FacilityID")
-occupancy.rates <- occupancy.rates %>% left_join(expanded.fixed.grouped.stat, by = c("FacilityID", "NightDates"))
+occupancy.rates <- camps.exist.expand.reservable %>% left_join(expanded.fixed.grouped.descriptive, by = c("FacilityID"))
+occupancy.rates <- occupancy.rates |>
+  mutate(NightDates = as.Date(NightDates)) |>
+  left_join(expanded.fixed.grouped.stat |>
+              mutate(NightDates = as.Date(NightDates)), by = c("FacilityID", "NightDates"))
 rm(expanded.fixed.grouped.descriptive, expanded.fixed.grouped.stat, camps.exist.expand.reservable)
 
 #Fix occupancy data
-View(occupancy.rates[1:10,])
+#View(occupancy.rates[1:10,])
 occupancy.rates[is.na(NightsReserved), NightsReserved := 0]
 occupancy.rates <- occupancy.rates %>% mutate(ReservableOccupancyPercent = (NightsReserved/number.campsites.existing))
 occupancy.rates <- occupancy.rates %>% mutate(ROPercentOver100 = case_when(ReservableOccupancyPercent > 1 ~ "Yes",
@@ -937,16 +951,16 @@ add.year.section.fast <- function(dat) {
 }
 occupancy.rates <- occupancy.rates %>% add.year.section.fast()
 
-View(occupancy.rates[1:10,])
-fwrite(occupancy.rates, "OccupancyRatesInitial.csv")
+#View(occupancy.rates[1:10,])
+fwrite(occupancy.rates, here::here(derived_dir, "OccupancyRatesInitial.gz"))
 
 
 #Examine joined data, find errors and make small fixes
-View(occupancy.rates[FacilityState.x != FacilityState.y,] %>% distinct(FacilityID, .keep_all = TRUE))
+#View(occupancy.rates[FacilityState.x != FacilityState.y,] %>% distinct(FacilityID, .keep_all = TRUE))
 states.not.same <- occupancy.rates[FacilityState.x != FacilityState.y,] %>% distinct(FacilityID, .keep_all = TRUE)
 states.not.same <- states.not.same$FacilityID
-View(occupancy.rates[LocationGood == "Bad Lat/Long",] %>% distinct(FacilityID, .keep_all = TRUE))
-View(occupancy.rates[FacilityName != Park,c("FacilityID", "FacilityName", "Park")] %>% distinct(FacilityID, .keep_all = TRUE))
+#View(occupancy.rates[LocationGood == "Bad Lat/Long",] %>% distinct(FacilityID, .keep_all = TRUE))
+#View(occupancy.rates[FacilityName != Park,c("FacilityID", "FacilityName", "Park")] %>% distinct(FacilityID, .keep_all = TRUE))
 
 occupancy.rates[,FacilityState := FacilityState.y]
 occupancy.rates[,FacilityRegion := FacilityRegion.y]
@@ -958,18 +972,18 @@ occupancy.rates[FacilityID %in% setdiff(states.not.same,geographic.states.better
 
 occupancy.rates <- occupancy.rates %>% select(-Park, -OrgID, -FacilityState.x, -FacilityState.y,
                                               -FacilityRegion.x, -FacilityRegion.y)
-View(occupancy.rates[1:10,])
-fwrite(occupancy.rates, "OccupancyRatesInitial.csv")
+#View(occupancy.rates[1:10,])
+fwrite(occupancy.rates, here::here(derived_dir, "OccupancyRatesInitial.gz"))
 
 #Remove 2021 numbers
-occupancy.rates <- fread("OccupancyRatesInitial.csv")
+occupancy.rates <- fread(here::here(derived_dir, "OccupancyRatesInitial.gz"))
 View(occupancy.rates[1:10,])
 occupancy.rates <- occupancy.rates[ResYear != 2021,]
 
 #Fix nights reserved raw number to account for over-100% capacity
 occupancy.rates[,NightsReservedFixed := NightsReserved]
 occupancy.rates[ROPercentOver100 == "Yes", NightsReservedFixed := number.campsites.existing]
-fwrite(occupancy.rates, "OccupancyRatesInitial.csv")
+fwrite(occupancy.rates, here::here(derived_dir, "OccupancyRatesInitial.gz"))
 
 
 100*(length(occupancy.rates[ROPercentOver100 == "Yes",]$FacilityID) / length(occupancy.rates$FacilityID)) #3.7 % of facility-days had over 100% occupancy
@@ -977,22 +991,22 @@ fwrite(occupancy.rates, "OccupancyRatesInitial.csv")
 
 #Re-group occupancy rates data by JUST facilityID to join with spatial data
 occupancy.rates.spatial <- occupancy.rates %>% group_by(FacilityID) %>% summarise(AvgOccupancy = mean(ReservableOccupancyPercentFixed))
-camps.exist.unique.spatial.clean <- fread("USE_UniqueFacilityIDs_WithSpatialAnalysis.csv")
+camps.exist.unique.spatial.clean <- fread(here::here(derived_dir, "USE_UniqueFacilityIDs_WithSpatialAnalysis.gz"))
 occupancy.rates.spatial <- occupancy.rates.spatial %>% left_join(camps.exist.unique.spatial.clean, by = "FacilityID")
-fwrite(occupancy.rates.spatial, "OccupancyRatesSpatialInitial.csv")
+fwrite(occupancy.rates.spatial, here::here(derived_dir, "OccupancyRatesSpatialInitial.gz"))
 
 
 
 
 #Examine 0% instances
 look.for.zeros <- occupancy.rates %>% group_by(FacilityID, ResYear) %>% summarise(AvgOccupancy = mean(ReservableOccupancyPercentFixed), AvgCampsites = mean(number.campsites.existing))
-View(look.for.zeros %>% filter(AvgOccupancy == 0 & AvgCampsites > 100)) #There are 12 instances of campgrounds with a year of 0% occupancy but over 100 campsites.
+#View(look.for.zeros %>% filter(AvgOccupancy == 0 & AvgCampsites > 100)) #There are 12 instances of campgrounds with a year of 0% occupancy but over 100 campsites.
 
 #Write full dataset
-occupancy.rates <- fread("OccupancyRatesInitial.csv")
+occupancy.rates <- fread(here::here(derived_dir, "OccupancyRatesInitial.gz"))
 occupancy.rates.full.plus.spatial <- occupancy.rates %>% left_join(camps.exist.unique.spatial.clean, by = "FacilityID")
-View(occupancy.rates.full.plus.spatial[1:10,])
-fwrite(occupancy.rates.full.plus.spatial, "FULLOccupancyRatesPlusSpatial.csv")
+#View(occupancy.rates.full.plus.spatial[1:10,])
+fwrite(occupancy.rates.full.plus.spatial, here::here(derived_dir, "FULLOccupancyRatesPlusSpatial.gz"))
 
 
 
