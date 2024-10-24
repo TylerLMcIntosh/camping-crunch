@@ -126,3 +126,69 @@ dir_ensure <- function(path) {
     message("Directory already exists: ", path)
   }
 }
+
+#' Unzip Files or All Zip Files in a Directory
+#'
+#' This function checks if the input is a zip file or a directory. If it's a specific zip file, it will unzip the file into a folder with the same name (excluding the `.zip` extension) if the folder does not already exist. If the input is a directory, it will locate all `.zip` files in that directory and unzip them into their respective folders, creating the folder if necessary.
+#'
+#' @param zip_location A character string representing either a path to a specific zip file or a directory containing zip files.
+#' 
+#' @return No return value. The function unzips files as needed and prints messages indicating whether files were unzipped or if the target folders already existed.
+#'
+#' @details 
+#' - If `zip_location` points to a zip file and the corresponding folder doesn't exist, the function will unzip the file into a new folder located in the same directory as the zip file.
+#' - If `zip_location` points to a directory, the function will iterate over all zip files in the directory, unzipping each into a folder named after the zip file (without the `.zip` extension).
+#' - If a folder with the same name as the zip file already exists, the function will skip unzipping that file.
+#' 
+#' @examples
+#' \dontrun{
+#' # Unzipping a specific file
+#' unzip_if_zipped("path/to/file.zip")
+#'
+#' # Unzipping all zip files in a directory
+#' unzip_if_zipped("path/to/directory")
+#' }
+#'
+#' @importFrom utils unzip
+unzip_if_zipped <- function(zip_location) {
+  # Check if the input is a specific zip file
+  if (file.exists(zip_location) && grepl("\\.zip$", zip_location)) {
+    # It's a specific zip file
+    folder_name <- sub("\\.zip$", "", basename(zip_location))
+    destination_path <- file.path(dirname(zip_location), folder_name)
+    
+    # Check if the corresponding folder already exists
+    if (!dir.exists(destination_path)) {
+      # Unzip the file into the new folder
+      unzip(zip_location, exdir = destination_path)
+      cat("Unzipped:", zip_location, "to", destination_path, "\n")
+    } else {
+      cat("Folder already exists:", destination_path, "\n")
+    }
+  } else if (dir.exists(zip_location)) {
+    # It's a directory, process all zip files in the directory
+    zip_files <- list.files(zip_location, pattern = "\\.zip$", full.names = TRUE)
+    
+    if (length(zip_files) == 0) {
+      cat("No zip files found in the directory:", zip_location, "\n")
+    } else {
+      for (zip_file in zip_files) {
+        folder_name <- sub("\\.zip$", "", basename(zip_file))
+        destination_path <- file.path(zip_location, folder_name)
+        
+        # Check if the corresponding folder already exists
+        if (!dir.exists(destination_path)) {
+          # Unzip the file into the new folder
+          unzip(zip_file, exdir = destination_path)
+          cat("Unzipped:", zip_file, "to", destination_path, "\n")
+        } else {
+          cat("Folder already exists:", destination_path, "\n")
+        }
+      }
+    }
+  } else {
+    cat("The provided path is neither a valid zip file nor a directory.\n")
+  }
+}
+
+

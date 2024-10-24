@@ -54,6 +54,9 @@ dir_ensure(derived_dir)
 #Set date format for dataset
 date.format <- "%Y-%m-%d"
 
+# Unzip all raw data files if still zipped
+unzip_if_zipped(here::here(raw_dir, "Recreation.govReservationData"))
+
 #Load data used in analysis
 #Load camping data
 campsites <- data.table::fread(here::here(raw_dir, "RIDBFullExport_V1_CSV/Campsites_API_v1.csv"))
@@ -809,7 +812,7 @@ fwrite(camping.facilities.all, here::here(derived_dir, "ALLSpatialCampingFacilit
 
 #PERFORM GIS ANALYSIS
 #Add back in to full campsite dataset
-spatial.analyzed.campgrounds <- fread(here::here(derived_dir, "Facilities_Spatial_Analysis_2.csv"))
+spatial.analyzed.campgrounds <- fread(here::here(raw_dir, "Facilities_Spatial_Analysis_2.csv"))
 spatial.analyzed.campgrounds <- spatial.analyzed.campgrounds %>% select(-OID_, -TARGET_FID)
 
 #Add FacilityRegion, create groups from proximity analysis
@@ -1011,24 +1014,23 @@ fwrite(occupancy.rates.full.plus.spatial, here::here(derived_dir, "FULLOccupancy
 
 
 #DATASETS AT THIS POINT:
-#OccupancyRatesInitial.csv is all occupancy rates grouped by FacilityID and Date, with Occupancy
-#OccupancyRatesSpatialInitial.csv is occupancy rates grouped by only FacilityID, with Average Occupancy and Spatial analysis data
-#FULLOccupancyRatesPlusSpatial.csv is all occupancy rates grouped by FacilityID and Date, with Occupancy and all spatial analysis data
+#OccupancyRatesInitial.gz is all occupancy rates grouped by FacilityID and Date, with Occupancy
+#OccupancyRatesSpatialInitial.gz is occupancy rates grouped by only FacilityID, with Average Occupancy and Spatial analysis data
+#FULLOccupancyRatesPlusSpatial.gz is all occupancy rates grouped by FacilityID and Date, with Occupancy and all spatial analysis data
 
 #PART 2: Subset for generalized percentages----
-main.directory <- "D:/Storage/RecreationAnalysis2021/"
-setwd(main.directory)
-occupancy.rates.full.plus.spatial <- fread("FULLOccupancyRatesPlusSpatial.csv")
+occupancy.rates.full.plus.spatial <- fread(here::here(derived_dir, "FULLOccupancyRatesPlusSpatial.gz"))
 #View((occupancy.rates.full.plus.spatial[1:10,]))
-NoAKHI.occupancy.rates.full.plus.spatial <- occupancy.rates.full.plus.spatial %>% filter(FacilityState != "Alaska")
-NoAKHI.occupancy.rates.full.plus.spatial <- NoAKHI.occupancy.rates.full.plus.spatial %>% filter(FacilityState != "Hawaii")
+NoAKHI.occupancy.rates.full.plus.spatial <- occupancy.rates.full.plus.spatial %>%
+  filter(FacilityState != "Alaska") |>
+  filter(FacilityState != "Hawaii")
 
 
 #INTEGRATE THE TWO DATASETS, REPLACE 2019/20 ESTIMATES WITH ACTUAL???
-SPATIAL_NoAKHI_utilization <- fread("SPATIAL_NoAKHI_utilization.csv")
+SPATIAL_NoAKHI_utilization <- fread(here::here(raw_dir, "SPATIAL_NoAKHI_utilization.csv"))
 
-View((NoAKHI.occupancy.rates.full.plus.spatial[1:10,]))
-View((SPATIAL_NoAKHI_utilization[1:10,]))
+# View((NoAKHI.occupancy.rates.full.plus.spatial[1:10,]))
+# View((SPATIAL_NoAKHI_utilization[1:10,]))
 
 NoAKHI.occupancy.rates.full.plus.spatial <- NoAKHI.occupancy.rates.full.plus.spatial %>% select(-Weekday, -NightsReserved, -ReservableOccupancyPercent,
                                                                                                  -ROPercentOver100, -ReservableOccupancyPercentFixed,
@@ -1063,12 +1065,12 @@ NoAKHI.occupancy.rates.full.plus.spatial.19.20 <- NoAKHI.occupancy.rates.full.pl
 
 #Rbind
 CombinedDatasets.occupancy.rates <- NoAKHI.occupancy.rates.full.plus.spatial.minus.19.20 %>% rbind(SPATIAL_NoAKHI_utilization)
-View(CombinedDatasets.occupancy.rates[1:10,])
+#View(CombinedDatasets.occupancy.rates[1:10,])
 
 NoNP.2019.2020.dataset.occupancy.rates <- SPATIAL_NoAKHI_utilization %>% filter(NPGroup == "10+km of NP")
 
-setwd("ToplineSubsets/")
-
+dir_toplines <- here::here("data/toplines")
+dir_ensure(dir_toplines)
 
 #MakeToplinesFunction
 make.toplines <- function(dat, dat.summer, dat.summer.weekend, dat.summer.weekday, dat.off.season, name, ...) {
@@ -1098,7 +1100,7 @@ make.toplines <- function(dat, dat.summer, dat.summer.weekend, dat.summer.weekda
     mutate(PercentCampsitesFilled = (NightsReservedFixed/number.campsites.existing)) %>%
     mutate(Subset = "Off-Season")
   all.subs <- rbind(full.year, summer, summer.weekend, summer.weekday, off.season)
-  fwrite(all.subs, paste(name, ".csv", sep = ""))
+  fwrite(all.subs, here::here(dir_toplines, paste(name, ".csv", sep = "")))
 }
 
 get.name <- function(dat) {
